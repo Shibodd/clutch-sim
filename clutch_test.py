@@ -1,79 +1,61 @@
 from dataclasses import dataclass
-import math
+from my_math import *
 import numpy as np
 import matplotlib.pyplot as plt
 import phys
 import time
-import pysinewave
 
-def angvel(rpm):
-  return rpm * 2 * math.pi / 60
 
-def rpm(angvel):
-  return angvel * 60 / (2 * math.pi)
+SOUND = False
+if SOUND:
+  import pysinewave
 
-# CAR_WHEEL_RADIUS = 0.125 # m
-# CAR_MASS = 300 # kg
-# GEAR_RATIO = 0.11
 
-CAR_INERTIA = 0.07 # GEAR_RATIO * CAR_MASS * (CAR_WHEEL_RADIUS ** 2)
-
-ENGINE_IDLE_ANGVEL = angvel(2500)
-ENGINE_IDLE_TORQUE = 9.35
-ENGINE_PEAK_TORQUE = 68 # Nm
-ENGINE_PEAK_TORQUE_ANGVEL = angvel(11500)
+CAR_INERTIA = 0.07 # out of my ass
 ENGINE_INERTIA = 0.02 # out of my ass
-ENGINE_FRICTION_TORQUE = 0
-
+ENGINE_FRICTION_TORQUE = 0 # out of my ass
+ENGINE_PEAK_TORQUE = 68
 ENGINE_LC_ANGVEL = angvel(5000)
 
-ENGINE_OFF_ANGVEL = angvel(2000)
-
-ENGINE_LOWRANGE_TORQUE_M = (ENGINE_IDLE_TORQUE - 0) / (ENGINE_IDLE_ANGVEL - ENGINE_OFF_ANGVEL)
-ENGINE_OKRANGE_TORQUE_M = (ENGINE_PEAK_TORQUE - ENGINE_IDLE_TORQUE) / (ENGINE_PEAK_TORQUE_ANGVEL - ENGINE_IDLE_ANGVEL)
-
-CLUTCH_STATIC_MAX_TORQUE = ENGINE_PEAK_TORQUE * 2.5 # 1.8 # out of my ass
+CLUTCH_STATIC_MAX_TORQUE = ENGINE_PEAK_TORQUE * 1.8 # out of my ass
 CLUTCH_KINETIC_MAX_TORQUE = CLUTCH_STATIC_MAX_TORQUE * 0.8 # out of my ass
 
-CLUTCH_ENGAGE_POSITION = 0.2
-CLUTCH_POSITION_M = 1 / (1 - CLUTCH_ENGAGE_POSITION)
+# Proportion of torque transmitted by the clutch in [0, 1] 
+# as a function of clutch position in [0, 1]
+CLUTCH_CURVE = PointwiseLerp([
+  (0.2, 0), # Clutch engagement
+  (1, 1)
+])
 
-def engine_curve(angvel):
-  if angvel < ENGINE_OFF_ANGVEL:
-    return 0
-  
-  elif angvel < ENGINE_IDLE_ANGVEL:
-    return (ENGINE_LOWRANGE_TORQUE_M * (angvel - ENGINE_OFF_ANGVEL))
-  
-  elif angvel < ENGINE_PEAK_TORQUE_ANGVEL:
-    return ENGINE_OKRANGE_TORQUE_M * (angvel - ENGINE_IDLE_ANGVEL) + ENGINE_IDLE_TORQUE
-  
-  else:
-    return 0
+# Torque in function of angular velocity
+ENGINE_CURVE = PointwiseLerp([
+  (angvel(2000), 0), 
+  (angvel(2500), 9.35),
+  (angvel(12000), ENGINE_PEAK_TORQUE),
+  (angvel(12000.1), 0)
+])
 
 def engine_torque(throttle, angvel, LC):
   if LC and angvel > ENGINE_LC_ANGVEL:
     return 0
-  return engine_curve(angvel) * throttle - ENGINE_FRICTION_TORQUE
+  return ENGINE_CURVE.get(angvel) * throttle - ENGINE_FRICTION_TORQUE
 
-def clamp(x, a, b):
-  return max(min(x, b), a)
+PRE_A_DUR = 0.1
+HOLD_DUR = 1
+POST_B_DUR = 0.1
+CLT_A = 0.35
+CLT_B = 0.5
 
-def clutch_pressure(pos):
-  return clamp((pos - CLUTCH_ENGAGE_POSITION) * CLUTCH_POSITION_M, 0, 1)
-
-
+CLT_POS_CURVE = PointwiseLerp([
+  (0, 0),
+  (PRE_A_DUR, CLT_A),
+  (PRE_A_DUR + HOLD_DUR, CLT_B),
+  (PRE_A_DUR + HOLD_DUR + POST_B_DUR, 1)
+])
 
 # INPUTS
 def control_clutch_position(t):
-  PRE_A_DURATION = 0.1
-  HOLD_DURATION = 0.5
-  POST_B_DURATION = 0.1
-
-  HOLD_A = 0.2
-  HOLD_B = 0.3
-
-  return clamp(ans, 0, 1)
+  return CLT_POS_CURVE.get(t)
 
 def control_throttle(t):
   return 1
@@ -92,15 +74,15 @@ y_in = []
 y_out = []
 y_clt = []
 
-sw = pysinewave.SineWave(pitch_per_second=50000)
-
-sw.set_frequency(0)
-sw.play()
+if SOUND:
+  sw = pysinewave.SineWave(pitch_per_second=50000)
+  sw.set_frequency(0)
+  sw.play()
 
 for t in x:
   clutch.i_input_torque = engine_torque(control_throttle(t), clutch.c_input_shaft.angular_velocity, True)
 
-  clt = clutch_pressure(control_clutch_position(t))
+  clt = CLUTCH_CURVE.get(control_clutch_position(t))
   clutch.i_kinetic_maxtorque = CLUTCH_KINETIC_MAX_TORQUE * clt
   clutch.i_static_maxtorque = CLUTCH_STATIC_MAX_TORQUE * clt
 
@@ -109,10 +91,12 @@ for t in x:
   y_clt.append(clt * 10000)
   clutch.tick(INTERVAL)
 
-  sw.set_frequency(4 * rpm(clutch.c_input_shaft.angular_velocity) / 60)
-  time.sleep(INTERVAL)
+  if SOUND:
+    sw.set_frequency(4 * rpm(clutch.c_input_shaft.angular_velocity) / 60)
+    time.sleep(INTERVAL)
 
-sw.stop()
+if SOUND:
+  sw.stop()
 
 plt.plot(x, y_in)
 plt.plot(x, y_out)
